@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/cloudflare/cloudflared/hello"
+	"github.com/cloudflare/cloudflared/internal/happyeyeballs"
 	"github.com/cloudflare/cloudflared/ipaccess"
 	"github.com/cloudflare/cloudflared/management"
 	"github.com/cloudflare/cloudflared/socks"
@@ -363,16 +364,23 @@ func newHTTPTransport(service OriginService, cfg OriginRequestConfig, log *zerol
 		httpTransport.TLSClientConfig.ServerName = cfg.OriginServerName
 	}
 
-	dialer := &net.Dialer{
+	baseDialer := &net.Dialer{
 		Timeout:   cfg.ConnectTimeout.Duration,
 		KeepAlive: cfg.TCPKeepAlive.Duration,
 	}
 	if cfg.NoHappyEyeballs {
-		dialer.FallbackDelay = -1 // As of Golang 1.12, a negative delay disables "happy eyeballs"
+		baseDialer.FallbackDelay = -1 // As of Golang 1.12, a negative delay disables "happy eyeballs"
+	}
+
+	var dialContext func(ctx context.Context, network, address string) (net.Conn, error)
+	if cfg.NoHappyEyeballs {
+		dialContext = baseDialer.DialContext
+	} else {
+		heDialer := &happyeyeballs.Dialer{Base: baseDialer}
+		dialContext = heDialer.DialContext
 	}
 
 	// DialContext depends on which kind of origin is being used.
-	dialContext := dialer.DialContext
 	switch service := service.(type) {
 
 	// If this origin is a unix socket, enforce network type "unix".
